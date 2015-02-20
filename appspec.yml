@@ -2,4 +2,4 @@ version: 0.0
 os: linux
 files:
   - source: /
-    destination: /var/www/html/jlgriffith_doap_com
+    destination: /var/www/html/jlgriffith.doap.com
