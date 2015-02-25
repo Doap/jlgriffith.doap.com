@@ -1,0 +1,119 @@
+#!/bin/bash
+me=$1
+theuser=$1
+thesite=$2
+echo theuser: $me
+thesite=`echo $me | sed 's/_/\./g'`; echo $thesite
+echo DevOps and Platforms Build Report $thesite
+echo deployed by: $me
+echo Deploy to: /home/$me/
+echo Local Repo: gitserver.doap.com:/opt/doap/$thesite
+echo Github Repo: https://github.com/Doap/$thesite.git
+echo
+DIRECTORY=/home/$me/$thesite
+echo Checkout/Sync to $DIRECTORY  >> /tmp/startup.log
+echo $DIRECTORY
+
+echo set identity
+  git config --global user.email "$me@gitserver.doap.com"
+  git config --global user.name "$me"
+  git config --global push.default matching
+  git remote add remote-$thesite git@github.com:/Doap/$thesite.git
+  
+  echo Add this PublicKey to Github Repo if you want to run builds from this machine:
+  echo /home/$me/.ssh/id_rsa.pub
+  cat /home/$me/.ssh/id_rsa.pub
+
+
+
+echo "if a repo already exists" >> /tmp/startup.log
+#if a repo already exists for $thesite then do
+#==========================
+if [ -d "$DIRECTORY" ]; then
+#==========================
+  chmod -R 777 /home/$me/$thesite/.git
+  echo "Sync existing repo" >> /tmp/startup.log
+  echo /home/$me/$thesite/git add . >> /tmp/startup.log
+  ( cd /home/$me/$thesite/ ; git add . )
+  echo $? - Git add run. >> /tmp/startup.log
+  echo Commit then get status: $thesite. >> /tmp/startup.log
+  ( cd /home/$me/$thesite ; git commit -m "Commit by $me" )
+  echo $? - Git commit run. >> /tmp/startup.log
+  echo Git push >> /tmp/startup.log
+  ( cd /home/$me/$thesite ; git push )
+  echo $? - Git push run. >> /tmp/startup.log
+  echo Git pull >> /tmp/startup.log
+  ( cd /home/$me/$thesite ; git pull )
+  echo $? - Git pull run. >> /tmp/startup.log
+  ( cd /home/$me/$thesite/ ; git status ) >> /tmp/startup.log
+  echo $? Status run. >> /tmp/startup.log
+  chmod -R 777 /home/$me/$thesite/.git
+ [ ! -f /home/$me/$thesite/appspec.yml ] && cat /var/www/html/files/appspec.yml | sed s/WordPress/$thesite/g > /home/$me/$thesite/appspec.yml
+
+ #push a package out to s3, save output to /tmp/etag-me.sh so we can adjust the parameters and execute as a new command.
+ ( cd /home/$theuser/$thesite ; aws deploy push --application-name $thesite --s3-location s3://sinkjuice/projects/$thesite.zip --region us-west-2 | tail -n +2 | sed 's/<deployment-group-name>/sinkjuice.com/g' | sed 's/<deployment-config-name>/CodeDeployDefault.AllAtOnce/g' | sed 's/<description>/CodeDeploy --region us-west-2/g' > /tmp/etag-$me.sh )
+
+ #add #!/bin/bas head to the file just made with the aws deploy push command so it can be executed later once we collect some parameters
+ sed -i '1s/^/#!\/bin\/bash\n /' /tmp/etag-$me.sh
+
+ #add '> /tmp2/json.out' to etag-me.sh  by saving to /tmp/etag2-me.sh
+ cat /tmp/etag-$me.sh | sed '2s/$/ > \/tmp2\/json.out /' > /tmp/temp.etag2-$me.sh
+
+ #copy fully prepped file to /tmp2/etag2-me.sh and run it
+ cp /tmp/temp.etag2-$me.sh /tmp2/etag2-$me.sh
+ chmod a+x /tmp2/etag2-$me.sh
+ /tmp2/etag2-$me.sh 
+
+#this will get the deployment-id from the /tmp2/json.out and assign it to did
+did=`cat /tmp2/json.out | sed s/{//g | sed s/}//g | sed s/\"deploymentId\"://g | sed s/\"//g | tail -n +2 | tr -d '\r\n' | sed 's/     //g'`
+
+echo "list deployments" >> /tmp/startup.log
+sleep 5
+aws deploy list-deployment-instances --region us-west-2 --deployment-id $did
+echo
+echo 
+#end deploy
+#=================
+else
+#=================
+ echo
+ echo
+ echo "no repo exists for $thesite.  " >> /tmp/startup.log
+ passedval=$thesite
+ theip=`curl -s http://169.254.169.254/latest/meta-data/public-ipv4`
+ theuser=`echo $passedval | sed 's/\./_/g'`
+ echo User: $theuser
+ echo Site: $thesite
+ mysql -s -u root -p`curl -s https://s3-us-west-2.amazonaws.com/sinkjuice/stuff` -h db-int.doap.com sites -e "select site from sitelist where gittrack = 'yes' and site = '$passedval' order by site asc;" > /home/$theuser/tracklist.txt
+ echo "Generated tracklist:" >> /tmp/startup.log
+ cat /home/$theuser/tracklist.txt >> /tmp/startup.log
+
+ #get the latest repo 
+ echo "git clone git@gitserver.doap.com:/opt/doap/$thesite /home/$theuser/$thesite" >> /tmp/startup.log
+ git clone git@gitserver.doap.com:/opt/doap/$thesite /home/$theuser/$thesite
+ chmod -R 777 /home/$me/$thesite/.git
+ ls -al /home/$theuser/$thesite >> /tmp/startup.log
+ msg=`echo $msg | sed s/ /-/g`
+ echo last commit msg: $msg
+
+ ################### this line is only needed for creating new apps.  wrap in some test logic then uncomment
+ #aws deploy create-application --application-name $thesite --region us-west-2
+
+ ( cd /home/$theuser/$thesite ; aws deploy push --application-name $thesite --s3-location s3://sinkjuice/projects/$thesite.zip --region us-west-2 | tail -n +2 | sed 's/<deployment-group-name>/sinkjuice.com/g' | sed 's/<deployment-config-name>/CodeDeployDefault.AllAtOnce/g' | sed 's/<description>/CodeDeploy --region us-west-2/g' > /tmp/etag-$me.sh )
+
+
+#prep and run the generated deploy script:
+ echo running: /tmp/etag-$me.sh
+ cat /tmp/etag-$me.sh
+ echo
+ sed -i '1s/^/#!\/bin\/bash\n /' /tmp/etag-$me.sh
+ chmod a+x /tmp/etag-$me.sh
+ /tmp/etag-$me.sh
+
+#uncomment this to trigger opsworks deploy when we are ready for that
+ #aws opsworks --region us-east-1 create-deployment --stack-id d8f4a1bf-8507-41f2-9633-fc48b3d02bf9 --app-id 03c341bb-282d-4ea9-a4b4-a30f8102de19 --command "{\"Name\":\"deploy\"}"
+
+#=================
+fi
+#=================
+
