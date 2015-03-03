@@ -2,7 +2,7 @@ version: 0.0
 os: linux
 files:
   - source: /
-    destination: /var/www/html/jlgriffith.doap.com   
+    destination: /var/www/html/jlgriffith.doap.com
 permissions: 
   - object: /var/www/html/jlgriffith/html
     pattern: "**"
